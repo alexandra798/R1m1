@@ -139,7 +139,7 @@ class RPNValidator:
 
     @staticmethod
     def calculate_stack_size(token_sequence):
-        """计算当前栈中的元素数量 - 真正修正版"""
+        """计算当前栈中的元素数量 - 修正版"""
         stack_size = 0
         i = 1  # 跳过BEG
 
@@ -157,10 +157,10 @@ class RPNValidator:
             elif token.type == TokenType.OPERATOR:
                 if token.name.startswith('ts_'):
                     # 时序操作符消耗1个操作数，产生1个结果
-                    # 下一个token必须是delta（作为参数）
+                    # stack_size = stack_size - 1 + 1 = stack_size (不变)
+                    # 但仍然需要跳过下一个delta token
                     if i + 1 < len(token_sequence) and token_sequence[i + 1].name.startswith('delta_'):
-                        i += 1  # 跳过delta token，它不影响栈
-                    # 栈大小不变（消耗1产生1）
+                        i += 1  # 跳过delta
                 else:
                     # 普通操作符
                     stack_size = stack_size - token.arity + 1

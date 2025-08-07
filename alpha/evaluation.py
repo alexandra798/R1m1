@@ -28,7 +28,7 @@ def is_rpn_formula(formula):
 
 
 def evaluate_rpn_formula(formula, data):
-    """评估RPN格式的公式"""
+    """评估RPN格式的公式 - 修复版"""
     try:
         # 导入RPN相关模块
         from mcts.token_system import TOKEN_DEFINITIONS
@@ -52,8 +52,16 @@ def evaluate_rpn_formula(formula, data):
         else:
             data_dict = data
 
-        # 使用RPN求值器评估
-        result = RPNEvaluator.evaluate(token_sequence, data_dict)
+        # 判断是否为完整表达式（应该以END结束）
+        is_complete = (len(token_sequence) > 0 and
+                       token_sequence[-1].name == 'END')
+
+        # 使用RPN求值器评估，明确指定allow_partial参数
+        result = RPNEvaluator.evaluate(
+            token_sequence,
+            data_dict,
+            allow_partial=not is_complete  # 完整表达式不允许partial
+        )
 
         # 确保返回Series
         if result is not None:

@@ -220,7 +220,7 @@ class RewardCalculator:
             return -0.5
 
     def _evaluate_state(self, state, X_data):
-        """评估状态对应的公式值"""
+        """评估状态对应的公式值 - 修复版"""
         try:
             # 将数据转换为字典格式
             if hasattr(X_data, 'to_dict'):
@@ -228,8 +228,16 @@ class RewardCalculator:
             else:
                 data_dict = X_data
 
-            # 使用RPN求值器评估
-            result = RPNEvaluator.evaluate(state.token_sequence, data_dict)
+            # 判断是否为部分表达式（未以END结束）
+            is_partial = (len(state.token_sequence) == 0 or
+                          state.token_sequence[-1].name != 'END')
+
+            # 使用RPN求值器评估，传递allow_partial参数
+            result = RPNEvaluator.evaluate(
+                state.token_sequence,
+                data_dict,
+                allow_partial=is_partial
+            )
 
             if result is not None:
                 if hasattr(result, 'values'):

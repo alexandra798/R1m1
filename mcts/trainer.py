@@ -53,7 +53,7 @@ class RiskMinerTrainer:
         self.reward_calculator.evaluate_complete_formula = self.evaluate_formula_wrapper
 
     def evaluate_formula_wrapper(self, state, X_data):
-        """评估公式的包装函数"""
+        """评估公式的包装函数 - 修复版"""
         try:
             # 将数据转换为字典格式
             if hasattr(X_data, 'to_dict'):
@@ -61,8 +61,16 @@ class RiskMinerTrainer:
             else:
                 data_dict = X_data
 
-            # 使用RPN求值器评估
-            result = RPNEvaluator.evaluate(state.token_sequence, data_dict)
+            # 判断是否为部分表达式
+            is_partial = (len(state.token_sequence) == 0 or
+                          state.token_sequence[-1].name != 'END')
+
+            # 使用RPN求值器评估，支持部分表达式
+            result = RPNEvaluator.evaluate(
+                state.token_sequence,
+                data_dict,
+                allow_partial=is_partial
+            )
 
             # 确保返回numpy数组
             if result is not None:

@@ -11,13 +11,19 @@ logger = logging.getLogger(__name__)
 class RPNEvaluator:
     """评估RPN表达式的值"""
 
-    # 在第70行附近，修改evaluate方法的返回部分
     @staticmethod
-    def evaluate(token_sequence, data_dict):
-        """评估RPN表达式 - 修正版"""
+    def evaluate(token_sequence, data_dict, allow_partial=True):
+        """
+        评估RPN表达式 - 修正版支持部分表达式
+
+        Args:
+            token_sequence: Token序列
+            data_dict: 数据字典
+            allow_partial: 是否允许部分表达式（栈中有多个元素）
+        """
         stack = []
 
-        # 获取数据长度
+        # 获取数据长度和索引
         data_length = None
         data_index = None
         for key, value in data_dict.items():
@@ -39,10 +45,8 @@ class RPNEvaluator:
             if token.type == TokenType.OPERAND:
                 # 处理操作数
                 if token.name in data_dict:
-                    # 股票特征
                     stack.append(data_dict[token.name])
                 elif token.name.startswith('const_'):
-                    # 常数 - 扩展为向量
                     const_value = float(token.name.split('_')[1])
                     if data_length and data_index is not None:
                         stack.append(pd.Series(const_value, index=data_index))
@@ -51,8 +55,7 @@ class RPNEvaluator:
                     else:
                         stack.append(const_value)
                 elif token.name.startswith('delta_'):
-                    # delta不应该单独入栈，它是时序操作符的参数
-                    # 这种情况不应该发生，除非紧跟在时序操作符后面
+                    # delta不应该单独出现，跳过
                     pass
 
             elif token.type == TokenType.OPERATOR:
@@ -62,21 +65,27 @@ class RPNEvaluator:
                         logger.error(f"Insufficient operands for {token.name}")
                         return None
 
-                    # 获取数据操作数
                     data_operand = stack.pop()
-
-                    # 下一个token应该是delta（窗口大小）
                     window = 5  # 默认窗口
+
+                    # 检查下一个token是否是delta
                     if i + 1 < len(token_sequence) and token_sequence[i + 1].name.startswith('delta_'):
                         delta_token = token_sequence[i + 1]
                         window = int(delta_token.name.split('_')[1])
-                        i += 1  # 跳过delta token
+                        i += 2  # 跳到delta后面
 
-                    # 应用时序操作
-                    result = RPNEvaluator.apply_time_series_op(
-                        token.name, data_operand, window
-                    )
-                    stack.append(result)
+                        # 应用时序操作
+                        result = RPNEvaluator.apply_time_series_op(
+                            token.name, data_operand, window
+                        )
+                        stack.append(result)
+                        continue  # 重要：跳过主循环的 i += 1
+                    else:
+                        # 没有delta，使用默认窗口
+                        result = RPNEvaluator.apply_time_series_op(
+                            token.name, data_operand, window
+                        )
+                        stack.append(result)
 
                 elif token.arity == 1:
                     # 一元操作符
@@ -103,23 +112,71 @@ class RPNEvaluator:
 
             i += 1
 
-        # 返回结果
-        if len(stack) == 1:
+        # 返回结果 - 修复：支持部分表达式
+        if len(stack) == 0:
+            logger.error("Empty stack after evaluation")
+            return None
+        elif len(stack) == 1:
+            # 完整表达式的正常情况
             result = stack[0]
-            # 确保返回向量
             if isinstance(result, (int, float, np.number)):
                 if data_length and data_index is not None:
                     return pd.Series(result, index=data_index)
                 elif data_length:
                     return np.full(data_length, result)
             return result
-        elif len(stack) == 0:
-            logger.error("Empty stack after evaluation")
-            return None
         else:
-            logger.error(f"Stack has {len(stack)} elements after evaluation, expected 1")
-            logger.error(f"Stack content: {[type(x) for x in stack]}")
-            return None
+            # 部分表达式的情况
+            if allow_partial:
+                # 对于部分表达式，返回栈顶元素或组合多个元素
+                # 策略1：返回栈顶元素
+                result = stack[-1]
+
+                # 策略2：如果有多个元素，可以尝试组合它们
+                # 例如，计算所有元素的平均值作为部分表达式的值
+                if len(stack) > 1:
+                    logger.debug(f"Partial expression with {len(stack)} stack elements")
+                    # 尝试将所有栈元素平均（这是一种启发式方法）
+                    try:
+                        # 确保所有元素都是相同形状的数组
+                        arrays = []
+                        for elem in stack:
+                            if isinstance(elem, pd.Series):
+                                arrays.append(elem.values)
+                            elif isinstance(elem, np.ndarray):
+                                arrays.append(elem)
+                            else:
+                                # 标量，扩展为数组
+                                if data_length:
+                                    arrays.append(np.full(data_length, elem))
+                                else:
+                                    arrays.append(np.array([elem]))
+
+                        # 计算平均值作为部分表达式的估值
+                        result_array = np.mean(arrays, axis=0)
+
+                        if data_index is not None:
+                            return pd.Series(result_array, index=data_index)
+                        else:
+                            return result_array
+                    except Exception as e:
+                        logger.debug(f"Failed to combine stack elements: {e}")
+                        # 失败时返回栈顶元素
+                        pass
+
+                # 返回结果
+                if isinstance(result, (int, float, np.number)):
+                    if data_length and data_index is not None:
+                        return pd.Series(result, index=data_index)
+                    elif data_length:
+                        return np.full(data_length, result)
+                return result
+            else:
+                # 不允许部分表达式时报错
+                logger.error(f"Stack has {len(stack)} elements after evaluation, expected 1")
+                logger.error(f"Stack content: {[type(x) for x in stack]}")
+                logger.error(f"RPN expression: {' '.join([t.name for t in token_sequence])}")
+                return None
 
     @staticmethod
     def apply_unary_op(op_name, operand, data_length=None, data_index=None):
@@ -152,7 +209,7 @@ class RPNEvaluator:
 
     @staticmethod
     def apply_binary_op(op_name, operand1, operand2, data_length=None, data_index=None):
-        """应用二元操作符 - 不再处理时序操作"""
+        """应用二元操作符"""
 
         # 确保两个操作数都是相同长度的向量
         if isinstance(operand1, (int, float)) and isinstance(operand2, (pd.Series, np.ndarray)):
