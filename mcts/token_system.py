@@ -57,12 +57,13 @@ TOKEN_DEFINITIONS = {
     'greater': Token(TokenType.OPERATOR, 'greater', arity=2),
     'less': Token(TokenType.OPERATOR, 'less', arity=2),
 
-    # 时序操作符（特殊：需要1个数据操作数和1个时间操作数）
-    'ts_mean': Token(TokenType.OPERATOR, 'ts_mean', arity=2),  # mean(close, 20)
-    'ts_std': Token(TokenType.OPERATOR, 'ts_std', arity=2),
-    'ts_max': Token(TokenType.OPERATOR, 'ts_max', arity=2),
-    'ts_min': Token(TokenType.OPERATOR, 'ts_min', arity=2),
-    'ts_sum': Token(TokenType.OPERATOR, 'ts_sum', arity=2),
+    # 时序操作符改为一元（只消耗1个数据操作数，delta作为参数）
+    'ts_mean': Token(TokenType.OPERATOR, 'ts_mean', arity=1),  # 改为arity=1
+    'ts_std': Token(TokenType.OPERATOR, 'ts_std', arity=1),
+    'ts_max': Token(TokenType.OPERATOR, 'ts_max', arity=1),
+    'ts_min': Token(TokenType.OPERATOR, 'ts_min', arity=1),
+    'ts_sum': Token(TokenType.OPERATOR, 'ts_sum', arity=1),
+
 
     # 相关性操作符（需要3个操作数：2个数据，1个时间窗口）
     'corr': Token(TokenType.OPERATOR, 'corr', arity=3),
@@ -105,41 +106,30 @@ class RPNValidator:
         if not token_sequence:
             return ['BEG']
 
-        if len(token_sequence) >= 30:  # 达到最大长度
+        if len(token_sequence) >= 30:
             return ['END'] if RPNValidator.can_terminate(token_sequence) else []
 
-        # 获取最后一个token
         last_token = token_sequence[-1] if token_sequence else None
 
         # 如果最后一个是时序操作符，下一个必须是delta
         if last_token and last_token.name.startswith('ts_'):
             return ['delta_1', 'delta_5', 'delta_10', 'delta_20']
 
-        # 计算当前栈大小（修正版）
+        # 计算当前栈大小
         stack_size = RPNValidator.calculate_stack_size(token_sequence)
         valid_tokens = []
 
         # 操作数总是可以添加（除非栈溢出）
-        if stack_size < 10:  # 防止栈过深
-            # 数据特征
+        if stack_size < 10:
             valid_tokens.extend(['open', 'high', 'low', 'close', 'volume', 'vwap'])
-            # 常数
             valid_tokens.extend(['const_1', 'const_2', 'const_-1', 'const_0'])
-            # 注意：delta_X 只能跟在时序操作符后面，所以这里不添加
+            # delta只能跟在时序操作符后面
 
         # 操作符需要足够的操作数
         for token_name, token in TOKEN_DEFINITIONS.items():
             if token.type == TokenType.OPERATOR:
-                if token_name.startswith('ts_'):
-                    # 时序操作符需要至少1个操作数
-                    if stack_size >= 1:
-                        valid_tokens.append(token_name)
-                elif token.arity == 1:
-                    if stack_size >= 1:
-                        valid_tokens.append(token_name)
-                elif token.arity == 2:
-                    if stack_size >= 2:
-                        valid_tokens.append(token_name)
+                if token.arity <= stack_size:  # 统一处理，因为ts_现在也是arity=1
+                    valid_tokens.append(token_name)
 
         # END需要栈中恰好1个元素
         if stack_size == 1:
@@ -149,7 +139,7 @@ class RPNValidator:
 
     @staticmethod
     def calculate_stack_size(token_sequence):
-        """计算当前栈中的元素数量 - 修正版"""
+        """计算当前栈中的元素数量 - 真正修正版"""
         stack_size = 0
         i = 1  # 跳过BEG
 
@@ -160,15 +150,16 @@ class RPNValidator:
                 break
 
             if token.type == TokenType.OPERAND:
-                # delta_X 不单独计入栈（它们是时序操作符的参数）
+                # delta不入栈，它是时序操作符的参数
                 if not token.name.startswith('delta_'):
                     stack_size += 1
+
             elif token.type == TokenType.OPERATOR:
                 if token.name.startswith('ts_'):
-                    # 时序操作符：消耗1个数据操作数，产生1个结果
-                    # 下一个token应该是delta（窗口大小）
+                    # 时序操作符消耗1个操作数，产生1个结果
+                    # 下一个token必须是delta（作为参数）
                     if i + 1 < len(token_sequence) and token_sequence[i + 1].name.startswith('delta_'):
-                        i += 1  # 跳过delta token
+                        i += 1  # 跳过delta token，它不影响栈
                     # 栈大小不变（消耗1产生1）
                 else:
                     # 普通操作符

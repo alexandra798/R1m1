@@ -4,7 +4,7 @@ import math
 import logging
 import torch
 from .node import MCTSNode
-from .token_system import RPNValidator, TOKEN_TO_INDEX
+from .token_system import RPNValidator, TOKEN_TO_INDEX, TOKEN_DEFINITIONS, TokenType
 from .mdp_environment import MDPState
 
 logger = logging.getLogger(__name__)
@@ -119,8 +119,8 @@ class MCTSSearcher:
                 _, value = self.policy_network(state_encoding)
             return value.item()
         else:
-            # 使用简单的rollout
-            return self.rollout(node, mdp_env, reward_calculator, X_data, y_data)
+            # 这次选择使用智能rollout
+            return self.smart_rollout(node, mdp_env, reward_calculator, X_data, y_data)
 
     def rollout(self, node, mdp_env, reward_calculator, X_data, y_data, max_depth=10):
         """
@@ -154,6 +154,78 @@ class MCTSSearcher:
                 )
 
             total_reward += reward  # 无折扣
+            depth += 1
+
+            if action == 'END':
+                break
+
+        return total_reward
+
+    def smart_rollout(self, node, mdp_env, reward_calculator, X_data, y_data, max_depth=15):
+        """
+        执行更智能的rollout来评估节点价值
+        """
+        current_state = node.state.copy()
+        total_reward = 0
+        depth = 0
+
+        # 偏好生成更复杂的公式
+        min_operations = 3  # 至少包含3个操作
+        operations_count = 0
+
+        while depth < max_depth and not current_state.token_sequence[-1].name == 'END':
+            valid_actions = RPNValidator.get_valid_next_tokens(current_state.token_sequence)
+
+            if not valid_actions:
+                break
+
+            # 智能选择策略
+            if operations_count < min_operations:
+                # 优先选择会产生更复杂公式的动作
+                operator_actions = [a for a in valid_actions if TOKEN_DEFINITIONS[a].type == TokenType.OPERATOR]
+                feature_actions = [a for a in valid_actions if a in ['open', 'high', 'low', 'close', 'volume', 'vwap']]
+
+                if current_state.stack_size >= 2 and operator_actions:
+                    # 有足够操作数时，优先选择操作符
+                    action = np.random.choice(operator_actions)
+                    operations_count += 1
+                elif feature_actions:
+                    # 否则选择特征
+                    action = np.random.choice(feature_actions)
+                else:
+                    action = np.random.choice(valid_actions)
+            else:
+                # 达到最小操作数后，可以考虑结束
+                if 'END' in valid_actions and np.random.random() < 0.3:
+                    action = 'END'
+                else:
+                    # 权重选择：操作符40%，特征40%，常数20%
+                    weights = []
+                    for a in valid_actions:
+                        if TOKEN_DEFINITIONS[a].type == TokenType.OPERATOR:
+                            weights.append(0.4)
+                        elif a in ['open', 'high', 'low', 'close', 'volume', 'vwap']:
+                            weights.append(0.4)
+                        elif a.startswith('const_'):
+                            weights.append(0.1)
+                        elif a.startswith('delta_'):
+                            weights.append(0.3)
+                        else:
+                            weights.append(0.2)
+
+                    weights = np.array(weights)
+                    weights = weights / weights.sum()
+                    action = np.random.choice(valid_actions, p=weights)
+
+            current_state.add_token(action)
+
+            # 计算奖励
+            if action == 'END':
+                reward = reward_calculator.calculate_terminal_reward(current_state, X_data, y_data)
+            else:
+                reward = reward_calculator.calculate_intermediate_reward(current_state, X_data, y_data)
+
+            total_reward += reward * (0.99 ** depth)  # 添加折扣因子
             depth += 1
 
             if action == 'END':

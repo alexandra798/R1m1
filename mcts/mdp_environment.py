@@ -1,4 +1,3 @@
-"""MDP环境和状态表示 - 基于RiskMiner论文的完整实现"""
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
@@ -22,23 +21,21 @@ class MDPState:
         self.stack_size = 0
 
     def add_token(self, token_name):
-        """添加一个Token到序列 - 修正版"""
+        """添加一个Token到序列 - 真正修正版"""
         token = TOKEN_DEFINITIONS[token_name]
         self.token_sequence.append(token)
         self.step_count += 1
 
-        # 更新栈大小（修正版）
+        # 更新栈大小
         if token.type == TokenType.OPERAND:
-            # delta不影响栈大小
+            # delta是时序操作符的参数，不影响栈大小
             if not token.name.startswith('delta_'):
                 self.stack_size += 1
         elif token.type == TokenType.OPERATOR:
-            if token.name.startswith('ts_'):
-                # 时序操作符实际上只消耗1个操作数
-                # stack_size不变（消耗1产生1）
-                pass
-            else:
-                self.stack_size = self.stack_size - token.arity + 1
+            # 所有操作符统一处理（包括时序操作符）
+            # 时序操作符现在是arity=1，消耗1个产生1个
+            self.stack_size = self.stack_size - token.arity + 1
+
 
     def encode_for_network(self):
         """编码状态用于神经网络输入"""
