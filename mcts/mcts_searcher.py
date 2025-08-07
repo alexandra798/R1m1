@@ -36,7 +36,7 @@ class MCTSSearcher:
 
         # 阶段2：扩展（Expansion）
         leaf_value = 0
-        if not current.is_terminal() and current.visits > 0:
+        if not current.is_terminal() and current.visits >= 0:
             # 扩展节点
             leaf_value = self.expand(current, mdp_env)
             # 选择一个新扩展的子节点进行评估

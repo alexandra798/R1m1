@@ -15,7 +15,7 @@ class RiskSeekingOptimizer:
     def __init__(self, policy_network, quantile_alpha=0.85, device=None):
         self.policy_network = policy_network
         self.quantile_alpha = quantile_alpha  # 目标分位数（如0.85表示优化top 15%）
-        self.quantile_estimate = 0.0  # 当前分位数估计
+        self.quantile_estimate = -1.0  # 当前分位数估计
         self.beta = 0.01  # 分位数更新学习率
         self.device = device if device else torch.device('cpu')
 

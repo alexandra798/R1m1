@@ -11,19 +11,23 @@ logger = logging.getLogger(__name__)
 class RPNEvaluator:
     """评估RPN表达式的值"""
 
+    # 在第70行附近，修改evaluate方法的返回部分
     @staticmethod
     def evaluate(token_sequence, data_dict):
-        """
-        评估RPN表达式
-
-        Args:
-            token_sequence: Token序列
-            data_dict: 包含股票数据的字典，如{'open': array, 'close': array, ...}
-
-        Returns:
-            result: 计算结果的numpy数组或pandas Series
-        """
+        """评估RPN表达式"""
         stack = []
+
+        # 获取数据长度（用于将标量扩展为向量）
+        data_length = None
+        for key, value in data_dict.items():
+            if isinstance(value, (pd.Series, np.ndarray)):
+                if isinstance(value, pd.Series):
+                    data_length = len(value)
+                    data_index = value.index
+                else:
+                    data_length = len(value)
+                    data_index = None
+                break
 
         for token in token_sequence[1:]:  # 跳过BEG
             if token.name == 'END':
@@ -35,63 +39,71 @@ class RPNEvaluator:
                     # 股票特征
                     stack.append(data_dict[token.name])
                 elif token.name.startswith('const_'):
-                    # 常数
+                    # 常数 - 扩展为向量
                     const_value = float(token.name.split('_')[1])
-                    # 创建与数据相同形状的常数数组
-                    if isinstance(data_dict.get('close'), pd.Series):
-                        stack.append(pd.Series(const_value, index=data_dict['close'].index))
+                    if data_length and data_index is not None:
+                        stack.append(pd.Series(const_value, index=data_index))
+                    elif data_length:
+                        stack.append(np.full(data_length, const_value))
                     else:
-                        stack.append(np.full_like(data_dict['close'], const_value))
+                        stack.append(const_value)
                 elif token.name.startswith('delta_'):
-                    # 时间窗口（作为整数使用）
+                    # 时间窗口作为整数
                     delta_value = int(token.name.split('_')[1])
                     stack.append(delta_value)
 
             elif token.type == TokenType.OPERATOR:
-                # 处理操作符
+                # 处理操作符...（保持原有逻辑）
                 if token.arity == 1:
-                    # 一元操作
                     if len(stack) < 1:
                         logger.error(f"Insufficient operands for {token.name}")
                         return None
                     operand = stack.pop()
-                    result = RPNEvaluator.apply_unary_op(token.name, operand)
+                    result = RPNEvaluator.apply_unary_op(token.name, operand, data_length, data_index)
                     stack.append(result)
-
                 elif token.arity == 2:
-                    # 二元操作
                     if len(stack) < 2:
                         logger.error(f"Insufficient operands for {token.name}")
                         return None
                     operand2 = stack.pop()
                     operand1 = stack.pop()
-                    result = RPNEvaluator.apply_binary_op(token.name, operand1, operand2)
+                    result = RPNEvaluator.apply_binary_op(token.name, operand1, operand2, data_length, data_index)
                     stack.append(result)
 
-                elif token.arity == 3:
-                    # 三元操作（如相关性）
-                    if len(stack) < 3:
-                        logger.error(f"Insufficient operands for {token.name}")
-                        return None
-                    operand3 = stack.pop()
-                    operand2 = stack.pop()
-                    operand1 = stack.pop()
-                    result = RPNEvaluator.apply_ternary_op(token.name, operand1, operand2, operand3)
-                    stack.append(result)
-
-        # 返回栈顶元素
+        # 返回结果 - 确保是向量
         if len(stack) == 1:
-            return stack[0]
+            result = stack[0]
+            # 如果结果是标量，扩展为向量
+            if isinstance(result, (int, float, np.number)):
+                if data_length and data_index is not None:
+                    return pd.Series(result, index=data_index)
+                elif data_length:
+                    return np.full(data_length, result)
+            return result
         elif len(stack) == 0:
             logger.error("Empty stack after evaluation")
             return None
         else:
+            # 多个元素时，返回栈顶（但仍记录警告）
             logger.warning(f"Stack has {len(stack)} elements after evaluation, expected 1")
-            return stack[0]  # 返回栈顶元素
+            result = stack[-1]
+            if isinstance(result, (int, float, np.number)):
+                if data_length and data_index is not None:
+                    return pd.Series(result, index=data_index)
+                elif data_length:
+                    return np.full(data_length, result)
+            return result
 
     @staticmethod
-    def apply_unary_op(op_name, operand):
-        """应用一元操作符"""
+    def apply_unary_op(op_name, operand, data_length=None, data_index=None):
+        """应用一元操作符 - 确保返回向量"""
+        # 如果operand是标量但我们需要向量
+        if isinstance(operand, (int, float)) and data_length:
+            if data_index is not None:
+                operand = pd.Series(operand, index=data_index)
+            else:
+                operand = np.full(data_length, operand)
+
         if op_name == 'abs':
             return np.abs(operand)
         elif op_name == 'log':
@@ -112,8 +124,37 @@ class RPNEvaluator:
             raise ValueError(f"Unknown unary operator: {op_name}")
 
     @staticmethod
-    def apply_binary_op(op_name, operand1, operand2):
-        """应用二元操作符"""
+    def apply_binary_op(op_name, operand1, operand2, data_length=None, data_index=None):
+        """应用二元操作符 - 智能处理时序操作"""
+
+        # 特殊处理时序操作符
+        if op_name.startswith('ts_'):
+            # operand2应该是窗口大小（整数）
+            if isinstance(operand2, (int, float)):
+                window = int(operand2)
+            elif isinstance(operand2, (pd.Series, np.ndarray)):
+                # 如果错误地传入了向量，取第一个值
+                window = int(operand2[0]) if len(operand2) > 0 else 5
+            else:
+                window = 5
+            # 确保operand1是向量
+            if isinstance(operand1, (int, float)):
+                if data_index is not None:
+                    operand1 = pd.Series(operand1, index=data_index)
+                elif data_length:
+                    operand1 = np.full(data_length, operand1)
+            return RPNEvaluator.apply_time_series_op(op_name, operand1, window)
+            # 确保两个操作数都是相同长度的向量
+        if isinstance(operand1, (int, float)) and isinstance(operand2, (pd.Series, np.ndarray)):
+            if isinstance(operand2, pd.Series):
+                operand1 = pd.Series(operand1, index=operand2.index)
+            else:
+                operand1 = np.full(len(operand2), operand1)
+        elif isinstance(operand2, (int, float)) and isinstance(operand1, (pd.Series, np.ndarray)):
+            if isinstance(operand1, pd.Series):
+                operand2 = pd.Series(operand2, index=operand1.index)
+            else:
+                operand2 = np.full(len(operand1), operand2)
         if op_name == 'add':
             return operand1 + operand2
         elif op_name == 'sub':
@@ -130,9 +171,7 @@ class RPNEvaluator:
             return (operand1 > operand2).astype(float)
         elif op_name == 'less':
             return (operand1 < operand2).astype(float)
-        elif op_name.startswith('ts_'):
-            # 时序操作
-            return RPNEvaluator.apply_time_series_op(op_name, operand1, operand2)
+
         else:
             raise ValueError(f"Unknown binary operator: {op_name}")
 

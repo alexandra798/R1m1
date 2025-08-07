@@ -22,16 +22,23 @@ class MDPState:
         self.stack_size = 0
 
     def add_token(self, token_name):
-        """添加一个Token到序列"""
+        """添加一个Token到序列 - 修正版"""
         token = TOKEN_DEFINITIONS[token_name]
         self.token_sequence.append(token)
         self.step_count += 1
 
-        # 更新栈大小
+        # 更新栈大小（修正版）
         if token.type == TokenType.OPERAND:
-            self.stack_size += 1
+            # delta不影响栈大小
+            if not token.name.startswith('delta_'):
+                self.stack_size += 1
         elif token.type == TokenType.OPERATOR:
-            self.stack_size = self.stack_size - token.arity + 1
+            if token.name.startswith('ts_'):
+                # 时序操作符实际上只消耗1个操作数
+                # stack_size不变（消耗1产生1）
+                pass
+            else:
+                self.stack_size = self.stack_size - token.arity + 1
 
     def encode_for_network(self):
         """编码状态用于神经网络输入"""
@@ -239,16 +246,33 @@ class RewardCalculator:
             return None
 
     def _calculate_ic(self, predictions, targets):
-        """计算IC（Pearson相关系数）"""
+        """计算IC（Pearson相关系数）- 修正版"""
         try:
+            # 处理predictions
             if hasattr(predictions, 'values'):
                 predictions = predictions.values
             if hasattr(targets, 'values'):
                 targets = targets.values
 
+            # 确保是numpy数组
             predictions = np.array(predictions).flatten()
             targets = np.array(targets).flatten()
 
+            # 检查长度
+            if len(predictions) == 1 and len(targets) > 1:
+                # predictions是标量，扩展为向量
+                predictions = np.full(len(targets), predictions[0])
+            elif len(targets) == 1 and len(predictions) > 1:
+                # targets是标量（不应该发生）
+                logger.error("Targets is scalar, this should not happen")
+                return 0.0
+            elif len(predictions) != len(targets):
+                # 长度不匹配，取最小长度
+                min_len = min(len(predictions), len(targets))
+                predictions = predictions[:min_len]
+                targets = targets[:min_len]
+
+            # 移除NaN
             valid_mask = ~(np.isnan(predictions) | np.isnan(targets))
             if valid_mask.sum() < 2:
                 return 0.0

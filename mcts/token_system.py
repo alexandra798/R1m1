@@ -108,22 +108,38 @@ class RPNValidator:
         if len(token_sequence) >= 30:  # 达到最大长度
             return ['END'] if RPNValidator.can_terminate(token_sequence) else []
 
-        # 计算当前栈大小
+        # 获取最后一个token
+        last_token = token_sequence[-1] if token_sequence else None
+
+        # 如果最后一个是时序操作符，下一个必须是delta
+        if last_token and last_token.name.startswith('ts_'):
+            return ['delta_1', 'delta_5', 'delta_10', 'delta_20']
+
+        # 计算当前栈大小（修正版）
         stack_size = RPNValidator.calculate_stack_size(token_sequence)
         valid_tokens = []
 
         # 操作数总是可以添加（除非栈溢出）
         if stack_size < 10:  # 防止栈过深
-            valid_tokens.extend([
-                'open', 'high', 'low', 'close', 'volume', 'vwap',
-                'const_1', 'const_2', 'delta_5', 'delta_10'
-            ])
+            # 数据特征
+            valid_tokens.extend(['open', 'high', 'low', 'close', 'volume', 'vwap'])
+            # 常数
+            valid_tokens.extend(['const_1', 'const_2', 'const_-1', 'const_0'])
+            # 注意：delta_X 只能跟在时序操作符后面，所以这里不添加
 
         # 操作符需要足够的操作数
         for token_name, token in TOKEN_DEFINITIONS.items():
             if token.type == TokenType.OPERATOR:
-                if stack_size >= token.arity:
-                    valid_tokens.append(token_name)
+                if token_name.startswith('ts_'):
+                    # 时序操作符需要至少1个操作数
+                    if stack_size >= 1:
+                        valid_tokens.append(token_name)
+                elif token.arity == 1:
+                    if stack_size >= 1:
+                        valid_tokens.append(token_name)
+                elif token.arity == 2:
+                    if stack_size >= 2:
+                        valid_tokens.append(token_name)
 
         # END需要栈中恰好1个元素
         if stack_size == 1:
@@ -133,15 +149,33 @@ class RPNValidator:
 
     @staticmethod
     def calculate_stack_size(token_sequence):
-        """计算当前栈中的元素数量"""
+        """计算当前栈中的元素数量 - 修正版"""
         stack_size = 0
-        for token in token_sequence[1:]:  # 跳过BEG
+        i = 1  # 跳过BEG
+
+        while i < len(token_sequence):
+            token = token_sequence[i]
+
             if token.name == 'END':
                 break
+
             if token.type == TokenType.OPERAND:
-                stack_size += 1
+                # delta_X 不单独计入栈（它们是时序操作符的参数）
+                if not token.name.startswith('delta_'):
+                    stack_size += 1
             elif token.type == TokenType.OPERATOR:
-                stack_size = stack_size - token.arity + 1
+                if token.name.startswith('ts_'):
+                    # 时序操作符：消耗1个数据操作数，产生1个结果
+                    # 下一个token应该是delta（窗口大小）
+                    if i + 1 < len(token_sequence) and token_sequence[i + 1].name.startswith('delta_'):
+                        i += 1  # 跳过delta token
+                    # 栈大小不变（消耗1产生1）
+                else:
+                    # 普通操作符
+                    stack_size = stack_size - token.arity + 1
+
+            i += 1
+
         return stack_size
 
     @staticmethod

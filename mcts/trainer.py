@@ -192,6 +192,10 @@ class RiskMinerTrainer:
             current = best_child
             depth += 1
 
+        if not current.is_terminal() and depth < max_depth:
+            # 强制终止
+            trajectory.append((current.state, 'END', reward))
+
         return trajectory
 
     def get_formula_from_trajectory(self, trajectory):
