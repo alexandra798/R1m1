@@ -59,7 +59,8 @@ class RiskSeekingOptimizer:
                 rewards.append(reward)
 
             # 转换为张量
-            states_tensor = torch.FloatTensor(states).to(self.device)
+            states_array = np.array(states)  # 先转换为单个numpy数组
+            states_tensor = torch.FloatTensor(states_array).to(self.device)
             actions_tensor = torch.LongTensor(actions).to(self.device)
 
             # 计算累积奖励（可以使用折扣因子）

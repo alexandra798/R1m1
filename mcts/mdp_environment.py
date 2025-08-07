@@ -121,6 +121,12 @@ class RewardCalculator:
         self.pool_size = 100  # 论文指定K=100
         self.linear_model = None
 
+    def calculate_ic(self, predictions, targets):
+        """
+        公共方法：计算IC（Information Coefficient）
+        """
+        return self._calculate_ic(predictions, targets)
+
     def calculate_intermediate_reward(self, state, X_data, y_data, evaluate_func=None):
         """
         计算中间奖励（论文公式5）
