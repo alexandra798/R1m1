@@ -4,6 +4,8 @@ import logging
 import os
 import torch
 from sklearn.model_selection import train_test_split
+from scipy.stats import spearmanr, ConstantInputWarning
+import warnings
 
 from config.config import *
 from data.data_loader import (
@@ -16,13 +18,9 @@ from alpha.pool import AlphaPool
 from alpha.evaluation import evaluate_formula
 from validation.cross_validation import cross_validate_formulas
 from validation.backtest import backtest_formulas
+from mcts.trainer import RiskMinerTrainer
 
-# 导入新旧系统
-from mcts.node import MCTSNode as NewMCTSNode  # 新的基于状态的节点
-from mcts.search import (
-    run_mcts_with_risk_seeking,
-    run_mcts_with_token_system
-)
+
 
 # 设置日志
 logging.basicConfig(
@@ -30,7 +28,52 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+warnings.filterwarnings('ignore', category=ConstantInputWarning)
 
+def run_mcts_with_token_system(X_train, y_train, num_iterations=200,
+                               use_policy_network=True, num_simulations=50, device=None):
+    """
+    使用新的Token系统运行MCTS
+
+    Args:
+        X_train: 训练数据特征
+        y_train: 训练数据标签
+        num_iterations: 训练迭代次数
+        use_policy_network: 是否使用策略网络
+        num_simulations: 每次迭代的模拟次数
+        device: torch设备(cuda或cpu)
+
+    Returns:
+        top_formulas: 最佳公式列表
+    """
+    logger.info("Starting MCTS with Token System")
+
+    # 创建训练器
+    trainer = RiskMinerTrainer(X_train, y_train, device=device)
+
+    # 训练
+    trainer.train(
+        num_iterations=num_iterations,
+        num_simulations_per_iteration=num_simulations
+    )
+
+    # 获取最佳公式
+    top_formulas = trainer.get_top_formulas(n=5)
+
+    # 转换为兼容格式（formula, score）
+    result = []
+    for formula in top_formulas:
+        # 计算IC作为分数
+        if trainer.alpha_pool:
+            matching_alpha = next((a for a in trainer.alpha_pool if a['formula'] == formula), None)
+            if matching_alpha:
+                result.append((formula, matching_alpha['ic']))
+            else:
+                result.append((formula, 0.0))
+        else:
+            result.append((formula, 0.0))
+
+    return result
 
 def main(args):
     """主函数"""
@@ -47,6 +90,10 @@ def main(args):
         device = torch.device(f"cuda:{args.gpu_id}")
         logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
         logger.info(f"GPU Memory: {torch.cuda.get_device_properties(device).total_memory / 1024 ** 3:.2f} GB")
+        torch.cuda.set_device(device)
+        torch.cuda.empty_cache()
+
+
     else:
         device = torch.device("cpu")
         logger.info("Using CPU")
@@ -73,25 +120,18 @@ def main(args):
     logger.info("=== Parts 2-4: MCTS & Alpha Pool Management ===")
 
     # 根据系统选择初始化不同的组件（才怪，锁定用新的）
-    # 使用新的Token系统
+
     if args.use_risk_seeking:
         logger.info("Using Token system with Risk Seeking Policy Network")
         best_formulas_quantile = run_mcts_with_token_system(
             X_train, y_train,
             num_iterations=MCTS_CONFIG['num_iterations'],
-            use_policy_network=True,
             num_simulations=50,
             device=device
-        )
+        ).to(device)
     else:
         logger.info("Using Token system without Policy Network")
-        best_formulas_quantile = run_mcts_with_token_system(
-            X_train, y_train,
-            num_iterations=MCTS_CONFIG['num_iterations'],
-            use_policy_network=False,
-            num_simulations=50,
-            device=device
-        )
+        best_formulas_quantile = None
 
 
     # 初始化Alpha池

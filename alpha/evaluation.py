@@ -10,10 +10,10 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mcts.formula_generator import (
-    safe_divide, ref, csrank,
+    safe_divide, ts_ref, csrank,
     # Group 2 operators
     sign, abs_op, log, greater, less,
-    rank, std, ts_max, ts_min, skew, kurt, mean, med, ts_sum,
+    ts_rank, std, ts_max, ts_min, skew, kurt, mean, med, ts_sum,
     cov, corr, decay_linear, wma, ema
 )
 
@@ -153,7 +153,7 @@ def evaluate_formula(formula, data):
             'len': len,
             'safe_divide': safe_divide,
             # Group 1 operators
-            'ref': ref,
+            'ts_ref': ts_ref,
             'csrank': csrank,
             # Group 2 operators - unary
             'sign': sign,
@@ -163,7 +163,7 @@ def evaluate_formula(formula, data):
             'greater': greater,
             'less': less,
             # Group 2 operators - time series
-            'rank': rank,
+            'ts_rank': ts_rank,
             'std': std,
             'ts_max': ts_max,
             'ts_min': ts_min,

@@ -3,12 +3,11 @@
 # MCTS参数
 MCTS_CONFIG = {
     "num_iterations": 200,  # MCTS search cycle执行200次
-    "exploration_param": 1.41,
     "risk_seeking_exploration": 2.0,
     "quantile_threshold": 0.85,
     "learning_rate_beta": 0.01,  # quantile regression学习率
     "learning_rate_gamma": 0.001,  # 网络参数更新学习率
-    "c_puct": 1.0  # PUCT常数
+    "c_puct": None  # PUCT常数
 }
 
 # Alpha池参数

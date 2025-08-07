@@ -26,12 +26,6 @@ class AlphaMiningPolicyNetwork(nn.Module):
             dropout=0.1
         )
 
-        # 注意力机制（可选，用于关注重要的Token）
-        self.attention = nn.MultiheadAttention(
-            embed_dim=64,
-            num_heads=4,
-            batch_first=True
-        )
 
         # 策略头（输出每个Token的选择概率）
         self.policy_head = nn.Sequential(
